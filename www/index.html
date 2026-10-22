@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>BlockX</title>
+<style>
+  html,body{margin:0;overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  body{background:#0b1020;display:flex;justify-content:center;align-items:center;gap:10px;height:100vh;height:100dvh;font-family:sans-serif;color:#fff;overflow:hidden;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);box-sizing:border-box}
+  canvas{background:#1d2b53;border-radius:8px;aspect-ratio:4/5;height:96vh;height:96dvh;width:auto}
+  #side{width:90px;display:flex;flex-direction:column;gap:8px;text-align:center;font-size:13px}
+  #side b{font-size:22px;display:block}
+  #side button{padding:10px 0;border:2px solid #29adff;border-radius:8px;background:#0b1020;color:#fff;font-size:15px;cursor:pointer;touch-action:manipulation}
+  #side button.on{background:#29adff;color:#0b1020;font-weight:bold}
+  @media (max-aspect-ratio:1/1){
+    body{flex-direction:column;gap:6px}
+    canvas{height:auto;width:min(100vw,calc((100vh - 70px) * .8));width:min(100vw,calc((100dvh - 70px) * .8))}
+    #side{width:auto;flex-direction:row;align-items:center;gap:8px;font-size:12px}
+    #side b{font-size:16px;display:inline;margin-left:4px}
+    #side button{padding:8px 14px}
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="500"></canvas>
+<div id="side">
+  <div>LEVEL<b id="lv">1/10</b></div>
+  <div>SPEED</div>
+  <button data-s="1" class="on">1x</button>
+  <button data-s="1.5">1.5x</button>
+  <button data-s="2">2x</button>
+</div>
+<script>
+  // BLOCKX: 10 LEVELS + BONUS STARS + ATANG + SPEED (1x hangtod 2x)
+  // Mouse/touch o arrow keys = bar | Click/Space = launch
+  // Numero sa block: 1,2,3 = pila ka igo para maguba | X = steel (dili maguba)
+  // 10 ka lahi-lahi nga STRUKTURA (10 ka kolum). 1,2,3 = pila ka igo | X = steel | . = walay block
+  var LEVELS = [
+    // 1 Pader (simple)
+    ["1111111111","1111111111","1111111111"],
+    // 2 Hagdan
+    ["11........","1111......","111111....","11111111..","1111111111"],
+    // 3 Checker
+    ["1.1.1.1.1.",".1.1.1.1.1","1.1.1.1.1.",".1.1.1.1.1","1.1.1.1.1."],
+    // 4 Pyramid
+    ["....11....","...1111...","..111111..",".11111111.","1111111111"],
+    // 5 Kasingkasing (2-hit)
+    ["..22..22..",".22222222.",".22222222.","..222222..","...2222...","....22...."],
+    // 6 Kastilyo (steel nga pundasyon, naay ganghaan)
+    ["1.1.11.1.1","1111111111","1222222221","1X22..22X1","1X22..22X1","1XXX..XXX1"],
+    // 7 Singsing (square ring)
+    ["1111111111","1........1","1.222222.1","1.2....2.1","1.222222.1","1........1","1111111111"],
+    // 8 X (steel sa tunga)
+    ["22......22",".22....22.","..22..22..","...2XX2...","...2XX2...","..22..22..",".22....22.","22......22"],
+    // 9 Maze / Fortress (3-hit + steel)
+    ["3333333333","X.X.XX.X.X","3222222223","3.XX..XX.3","3211111123","X.X....X.X"],
+    // 10 BOSS (nawong nga steel ang mata)
+    ["XX333333XX","X33333333X","33XX33XX33","33XX33XX33","3333333333","3.111111.3","X3.3333.3X","XX..11..XX"]
+  ];
+  var NAMES = ["Pader","Hagdan","Checker","Pyramid","Kasingkasing","Kastilyo","Singsing","X","Maze","BOSS"];
+  // ATANG (construct nga mo-babag sa bola): LAHI KADA LEVEL, mas lisud kada level
+  // t: box (dili mo-dagan) | slide (mo-slide wala/tuo) | door (ganghaan nga mo-abli/sirado) | prop (propeller)
+  //    vslide (elevator taas/ubos) | bump (bumper) | orbit (mga block nga nag-orbit) | blink (pader nga mo-kidlat)
+  var OBST = [
+    {tip:"Atang 1: usa ka steel block (dili mo-dagan)",
+      o:[{t:"box",x:160,y:320,w:80,h:12}]},
+    {tip:"Atang 2: bar nga nag-slide",
+      o:[{t:"slide",y:320,w:80,sp:1.3,x:60}]},
+    {tip:"Atang 3: ganghaan nga mo-abli ug mo-sirado",
+      o:[{t:"door",y:320,min:110,max:240,sp:0.03}]},
+    {tip:"Atang 4: propeller nga nag-uyog + bomba",
+      o:[{t:"prop",x:200,y:330,len:55,sp:0.03}], bomb:12},
+    {tip:"Atang 5: 2 ka elevator (taas-ubos)",
+      o:[{t:"vslide",x:80,y:270,y1:400,w:14,h:70,sp:1.5},{t:"vslide",x:306,y:400,y1:270,w:14,h:70,sp:1.5}], bomb:10},
+    {tip:"Atang 6: bumper cluster (mo-sabog ang bola)",
+      o:[{t:"bump",x:120,y:280,r:14},{t:"bump",x:280,y:280,r:14},{t:"bump",x:200,y:330,r:14},{t:"bump",x:120,y:380,r:14},{t:"bump",x:280,y:380,r:14}], bomb:9},
+    {tip:"Atang 7: mga block nga nag-orbit",
+      o:[{t:"orbit",cx:200,cy:340,rad:70,n:3,sp:0.03,size:22}], bomb:8},
+    {tip:"Atang 8: 2 ka propeller nga magkontra",
+      o:[{t:"prop",x:110,y:330,len:55,sp:0.035},{t:"prop",x:290,y:330,len:55,sp:-0.035}], bomb:7},
+    {tip:"Atang 9: pader nga mo-kidlat (abli/sirado)",
+      o:[{t:"blink",x:0,y:290,w:160,h:12,on:2,off:1.5},{t:"blink",x:240,y:290,w:160,h:12,on:1.5,off:2,tm:100},{t:"blink",x:110,y:370,w:180,h:12,on:2,off:2,tm:50},{t:"door",y:420,min:120,max:220,sp:0.05}], bomb:6},
+    {tip:"BOSS: tanang klase sa atang, paspas!",
+      o:[{t:"slide",y:280,w:110,sp:3.2,x:20},{t:"prop",x:120,y:350,len:55,sp:0.045},{t:"prop",x:280,y:350,len:55,sp:-0.045},{t:"orbit",cx:200,cy:350,rad:35,n:2,sp:0.05,size:18},{t:"bump",x:200,y:415,r:14}], bomb:4}
+  ];
+  var c = document.getElementById("c"), x = c.getContext("2d"), W = 400, H = 500;
+  var P = {x:160, w:80, h:12, y:470};
+  var balls = [], bricks = [], stars = [], score = 0, lives = 3, level = 1;
+  var keys = {}, state = "ready", msg = "", msgT = 0, dir = 1;
+  var obs = [], bombs = [], bombTimer = 0, bombEvery = 0, shrinkT = 0;
+  var speedMul = 1, acc = 0, MAX_BALLS = 60;
+  // BONUS STAR: 15% nga higayon kada block nga maigo (usba ang numero kung gusto nimo, 0.15 = 15%)
+  var STAR_CHANCE = 0.15;
+  // COINS: 25% nga higayon kada block nga maguba mo-drop ug coin. Salo-a sa bar. Ma-ipon ang coins (naka-save).
+  var COIN_CHANCE = 0.25;
+  var coins = 0, owned = {normal:true}, sel = "normal", drops = [], fx = [], shopMsg = "", shopMsgT = 0;
+
+  function baseSpeed(){ return 5 + (level - 1) * 0.3; }
+
+  function build(){
+    bricks = [];
+    var map = LEVELS[level - 1];
+    for(var r = 0; r < map.length; r++) for(var i = 0; i < 10; i++){
+      var ch = map[r].charAt(i);
+      if(ch == ".") continue;
+      var steel = (ch == "X"), hp = steel ? 99 : Number(ch);
+      bricks.push({x:i*40+2, y:r*22+50, w:36, h:16, hp:hp, max:hp, steel:steel, hue:r*45, burn:0, bt:0});
+    }
+    var cf = OBST[level - 1];
+    obs = (cf.o || []).map(function(a){
+      var o = {}; for(var k in a) o[k] = a[k];
+      o.ph = 0; o.ang = 0; o.tm = a.tm || 0; o.cy = a.y;
+      o.h = a.h || (a.t == "door" || a.t == "blink" ? 12 : 10);
+      if(a.t == "slide" && o.x == null) o.x = 60;
+      o.gap = a.min != null ? (a.min + a.max) / 2 : 200;
+      o.solid = true;
+      return o;
+    });
+    bombEvery = cf.bomb || 0; bombTimer = bombEvery;
+    document.getElementById("lv").textContent = level + "/10";
+  }
+  function serve(){
+    balls = [{x:P.x + P.w/2, y:P.y - 8, vx:0, vy:0, r:(sel == "cannon" ? 9 : 7), type:sel}];
+    stars = []; bombs = []; drops = []; fx = []; P.w = 80; shrinkT = 0;
+    state = "ready";
+  }
+  function launch(){
+    if(state == "intro"){ state = "shop"; return; }
+    if(state == "shop"){ startGame(); return; }
+    if(state == "ready"){ balls[0].vx = baseSpeed() * 0.5 * dir; balls[0].vy = -baseSpeed(); state = "play"; }
+    else if(state == "over" || state == "won"){ restart(); state = "shop"; }
+  }
+  function restart(){ score = 0; lives = 3; level = 1; build(); serve(); msg = "LEVEL 1"; msgT = 90; }
+
+  function movePaddle(px){ P.x = Math.max(0, Math.min(W - P.w, px)); }
+  // Touch/mouse: i-drag ang tudlo bisan asa sa screen para ig-move ang bar, tap para launch
+  function aim(e){
+    var r = c.getBoundingClientRect();
+    var nx = (e.clientX - r.left) * (W / r.width) - P.w/2;
+    if(nx != P.x) dir = nx > P.x ? 1 : -1;
+    movePaddle(nx);
+  }
+  document.addEventListener("pointermove", aim);
+  document.addEventListener("pointerdown", function(e){
+    if(e.target.tagName == "BUTTON") return;
+    if(state == "shop"){
+      var r = c.getBoundingClientRect();
+      shopTap((e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height));
+      return;
+    }
+    aim(e); launch();
+  });
+  document.onkeydown = function(e){ keys[e.key] = true; if(e.key == " ") launch(); };
+  document.onkeyup = function(e){ keys[e.key] = false; };
+
+  // SPEED buttons sa kilid
+  var btns = document.querySelectorAll("#side button");
+  for(var q = 0; q < btns.length; q++) btns[q].onclick = function(){
+    speedMul = Number(this.getAttribute("data-s"));
+    for(var w = 0; w < btns.length; w++) btns[w].className = (btns[w] == this) ? "on" : "";
+    this.blur();
+  };
+
+  // BONUS: i-multiply ang tanang bola (2x hangtod 5x)
+  function multiply(m){
+    var cur = balls.slice();
+    cur.forEach(function(b){
+      var sp = Math.hypot(b.vx, b.vy) || baseSpeed();
+      for(var k = 1; k < m; k++){
+        if(balls.length >= MAX_BALLS) break;
+        var a = (Math.random() - 0.5) * 2;
+        balls.push({x:b.x, y:b.y, vx:Math.sin(a)*sp, vy:-Math.cos(a)*sp, r:b.r, type:b.type});
+      }
+    });
+    msg = "BONUS x" + m + "!"; msgT = 90;
+  }
+
+  // ===== SAVE (coins + balls nga napalit) =====
+  function applySave(d){
+    if(!d) return;
+    coins = Math.max(0, Number(d.coins) || 0);
+    var o = d.owned || {};
+    owned = {normal:true, basket:!!o.basket, fire:!!o.fire, cannon:!!o.cannon};
+    sel = (d.sel && owned[d.sel]) ? d.sel : "normal";
+  }
+  function saveGame(){
+    var d = {coins:coins, owned:owned, sel:sel};
+    try{ parent.postMessage({blockxSave:d}, "*"); }catch(e){}
+    try{ localStorage.setItem("blockx-save", JSON.stringify(d)); }catch(e){}
+  }
+  window.addEventListener("message", function(e){ if(e.data && e.data.blockxLoad) applySave(e.data.blockxLoad); });
+  if(window.parent === window){ try{ applySave(JSON.parse(localStorage.getItem("blockx-save"))); }catch(e){} }
+  try{ parent.postMessage({blockxReady:true}, "*"); }catch(e){}
+
+  // ===== BALL EFFECTS =====
+  // damageBrick: gamiton sa tanang klase sa igo (direct, burn, splash). Kung maguba: score + chance sa coin.
+  function damageBrick(br, dmg, mult){
+    if(br.steel || br.hp <= 0) return;
+    br.hp -= dmg;
+    if(br.hp <= 0){
+      br.hp = 0; score += 10 * br.max * mult;
+      if(Math.random() < COIN_CHANCE) drops.push({x:br.x + br.w/2, y:br.y, v:2.2, ph:0});
+    }
+  }
+  // CANNON: area hit sa duol nga blocks
+  function explode(cx, cy){
+    fx.push({type:"boom", x:cx, y:cy, r:8, max:54, life:18});
+    bricks.forEach(function(k){
+      if(k.steel || k.hp <= 0) return;
+      if(Math.hypot(k.x + k.w/2 - cx, k.y + k.h/2 - cy) <= 54) damageBrick(k, 1, 1);
+    });
+  }
+  // FIREBALL: mo-sunog ang block, mo-anam-anam ug dagan ang kalayo sa duol nga blocks
+  function burnStep(k){
+    if(!(k.burn > 0) || k.hp <= 0) return;
+    k.bt++;
+    if(k.bt >= 40){
+      k.bt = 0; k.burn--;
+      damageBrick(k, 1, 1);
+      bricks.forEach(function(n){
+        if(n !== k && !n.steel && n.hp > 0 && !(n.burn > 0) && Math.hypot(n.x - k.x, n.y - k.y) < 50 && Math.random() < 0.4){ n.burn = 2; n.bt = 0; }
+      });
+    }
+  }
+
+  // ===== ATANG ENGINE =====
+  function rectsOf(o, all){
+    if(o.t == "box" || o.t == "slide") return [{x:o.x, y:o.y, w:o.w, h:o.h}];
+    if(o.t == "vslide") return [{x:o.x, y:o.cy, w:o.w, h:o.h}];
+    if(o.t == "door"){ var hw = (W - o.gap) / 2; return [{x:0, y:o.y, w:hw, h:o.h}, {x:W - hw, y:o.y, w:hw, h:o.h}]; }
+    if(o.t == "blink") return (o.solid || all) ? [{x:o.x, y:o.y, w:o.w, h:o.h}] : [];
+    if(o.t == "orbit"){
+      var r = [];
+      for(var i = 0; i < o.n; i++){
+        var a = o.ang + i * 6.2832 / o.n;
+        r.push({x:o.cx + Math.cos(a) * o.rad - o.size/2, y:o.cy + Math.sin(a) * o.rad - o.size/2, w:o.size, h:o.size});
+      }
+      return r;
+    }
+    return [];
+  }
+  function stepObs(o){
+    if(o.t == "slide"){
+      o.x += o.sp;
+      if(o.x < 0){ o.x = 0; o.sp = Math.abs(o.sp); }
+      if(o.x + o.w > W){ o.x = W - o.w; o.sp = -Math.abs(o.sp); }
+    } else if(o.t == "vslide"){
+      o.cy += o.sp;
+      var lo = Math.min(o.y, o.y1), hi = Math.max(o.y, o.y1);
+      if(o.cy < lo){ o.cy = lo; o.sp = Math.abs(o.sp); }
+      if(o.cy > hi){ o.cy = hi; o.sp = -Math.abs(o.sp); }
+    } else if(o.t == "door"){
+      o.ph += o.sp; o.gap = o.min + (o.max - o.min) * (0.5 + 0.5 * Math.sin(o.ph));
+    } else if(o.t == "prop" || o.t == "orbit"){
+      o.ang += o.sp;
+    } else if(o.t == "blink"){
+      o.tm++; o.solid = (o.tm % ((o.on + o.off) * 60)) < o.on * 60;
+    }
+  }
+  function hitObs(b, o){
+    if(o.t == "bump"){
+      var dx = b.x - o.x, dy = b.y - o.y, d = Math.hypot(dx, dy) || 1;
+      if(d < b.r + o.r){
+        var nx = dx / d, ny = dy / d, dot = b.vx * nx + b.vy * ny;
+        if(dot < 0){ b.vx -= 2 * dot * nx; b.vy -= 2 * dot * ny; score += 5; }
+        b.x = o.x + nx * (b.r + o.r); b.y = o.y + ny * (b.r + o.r);
+      }
+      return;
+    }
+    if(o.t == "prop"){
+      var ca = Math.cos(o.ang) * o.len, sa = Math.sin(o.ang) * o.len;
+      var x1 = o.x - ca, y1 = o.y - sa, ddx = 2 * ca, ddy = 2 * sa;
+      var t = Math.max(0, Math.min(1, ((b.x - x1) * ddx + (b.y - y1) * ddy) / (ddx * ddx + ddy * ddy)));
+      var px = x1 + t * ddx, py = y1 + t * ddy, ex = b.x - px, ey = b.y - py, dd = Math.hypot(ex, ey) || 1;
+      if(dd < b.r + 4){
+        var mx = ex / dd, my = ey / dd, dt = b.vx * mx + b.vy * my;
+        if(dt < 0){ b.vx -= 2 * dt * mx; b.vy -= 2 * dt * my; }
+        b.x = px + mx * (b.r + 4); b.y = py + my * (b.r + 4);
+      }
+      return;
+    }
+    rectsOf(o).forEach(function(rc){
+      if(b.x + b.r > rc.x && b.x - b.r < rc.x + rc.w && b.y + b.r > rc.y && b.y - b.r < rc.y + rc.h){
+        var ox = Math.min(b.x + b.r - rc.x, rc.x + rc.w - (b.x - b.r));
+        var oy = Math.min(b.y + b.r - rc.y, rc.y + rc.h - (b.y - b.r));
+        if(ox < oy){ var sx = b.x < rc.x + rc.w/2 ? -1 : 1; b.vx = sx * Math.abs(b.vx); b.x += sx * ox; }
+        else { var sy = b.y < rc.y + rc.h/2 ? -1 : 1; b.vy = sy * Math.abs(b.vy); b.y += sy * oy; }
+      }
+    });
+  }
+  function drawObs(o){
+    if(o.t == "bump"){
+      x.fillStyle = "#e040fb"; x.beginPath(); x.arc(o.x, o.y, o.r, 0, 7); x.fill();
+      x.strokeStyle = "#fff"; x.stroke(); return;
+    }
+    if(o.t == "prop"){
+      var ca = Math.cos(o.ang) * o.len, sa = Math.sin(o.ang) * o.len;
+      x.strokeStyle = "#ff7043"; x.lineWidth = 8; x.lineCap = "round";
+      x.beginPath(); x.moveTo(o.x - ca, o.y - sa); x.lineTo(o.x + ca, o.y + sa); x.stroke();
+      x.lineWidth = 1; x.lineCap = "butt";
+      x.fillStyle = "#fff"; x.beginPath(); x.arc(o.x, o.y, 5, 0, 7); x.fill(); return;
+    }
+    var cols = {box:"#8a8f98", slide:"#8a8f98", vslide:"#26a69a", door:"#90a4ae", blink:"#ef5350", orbit:"#ab47bc"};
+    x.globalAlpha = (o.t == "blink" && !o.solid) ? 0.2 : 1;
+    rectsOf(o, true).forEach(function(rc){
+      x.fillStyle = cols[o.t]; x.fillRect(rc.x, rc.y, rc.w, rc.h);
+      x.strokeStyle = "#fff"; x.strokeRect(rc.x + 1, rc.y + 1, rc.w - 2, rc.h - 2);
+    });
+    x.globalAlpha = 1;
+  }
+
+  function update(){
+    if(keys["ArrowLeft"] || keys["a"]){ movePaddle(P.x - 7); dir = -1; }
+    if(keys["ArrowRight"] || keys["d"]){ movePaddle(P.x + 7); dir = 1; }
+    if(state == "ready"){ balls[0].x = P.x + P.w/2; return; }
+    if(state != "play") return;
+
+    obs.forEach(stepObs);
+    if(shrinkT > 0){
+      shrinkT -= 1 / (60 * speedMul);
+      if(shrinkT <= 0){ P.x -= 15; P.w = 80; movePaddle(P.x); }
+    }
+    if(bombEvery > 0){
+      bombTimer -= 1 / (60 * speedMul);
+      if(bombTimer <= 0){ bombs.push({x:20 + Math.random() * (W - 40), y:0, v:2.5}); bombTimer = bombEvery; }
+    }
+    for(var z = bombs.length - 1; z >= 0; z--){
+      var bo = bombs[z]; bo.y += bo.v;
+      if(bo.y > P.y - 6 && bo.y < P.y + P.h + 8 && bo.x > P.x - 8 && bo.x < P.x + P.w + 8){
+        if(P.w == 80){ P.x += 15; P.w = 50; }
+        shrinkT = 8; msg = "OUCH! Gamay ang bar"; msgT = 60; bombs.splice(z, 1);
+      } else if(bo.y > H + 10) bombs.splice(z, 1);
+    }
+
+    for(var i = balls.length - 1; i >= 0; i--){
+      var b = balls[i];
+      b.x += b.vx; b.y += b.vy;
+      if(b.type == "fire"){ b.trail = b.trail || []; b.trail.push({x:b.x, y:b.y}); if(b.trail.length > 6) b.trail.shift(); }
+      if(b.x < b.r){ b.x = b.r; b.vx = Math.abs(b.vx); }
+      if(b.x > W - b.r){ b.x = W - b.r; b.vx = -Math.abs(b.vx); }
+      if(b.y < b.r){ b.y = b.r; b.vy = Math.abs(b.vy); }
+
+      // BOUNCE sa bar: ang aim depende kung asa ka naigo
+      if(b.vy > 0 && b.y + b.r >= P.y && b.y - b.r <= P.y + P.h && b.x > P.x && b.x < P.x + P.w){
+        var hit = (b.x - (P.x + P.w/2)) / (P.w/2);
+        var ang = hit * 1.1, sp = Math.max(baseSpeed(), Math.hypot(b.vx, b.vy));
+        b.vx = Math.sin(ang) * sp; b.vy = -Math.cos(ang) * sp;
+        b.y = P.y - b.r;
+      }
+      // Igo sa blocks
+      for(var j = 0; j < bricks.length; j++){
+        var br = bricks[j];
+        if(br.hp > 0 && b.x + b.r > br.x && b.x - b.r < br.x + br.w && b.y + b.r > br.y && b.y - b.r < br.y + br.h){
+          var ox = Math.min(b.x + b.r - br.x, br.x + br.w - (b.x - b.r));
+          var oy = Math.min(b.y + b.r - br.y, br.y + br.h - (b.y - b.r));
+          if(ox < oy) b.vx *= -1; else b.vy *= -1;
+          if(!br.steel){
+            if(Math.random() < STAR_CHANCE) stars.push({x:br.x + br.w/2, y:br.y, v:2});
+            var bt = b.type || "normal", mult = (bt == "basket") ? 2 : 1;
+            score += 5 * mult;
+            if(mult == 2) fx.push({type:"txt", x:br.x + br.w/2, y:br.y, t:"x2", life:30});
+            if(bt == "cannon"){ explode(br.x + br.w/2, br.y + br.h/2); }
+            else {
+              damageBrick(br, 1, mult);
+              if(bt == "fire" && br.hp > 0){ br.burn = 3; br.bt = 0; }
+            }
+          }
+          break;
+        }
+      }
+      obs.forEach(function(o){ hitObs(b, o); });
+      if(b.y > H + 10) balls.splice(i, 1);
+    }
+
+    for(var s = stars.length - 1; s >= 0; s--){
+      var st = stars[s]; st.y += st.v;
+      if(st.y > P.y - 6 && st.y < P.y + P.h + 8 && st.x > P.x - 8 && st.x < P.x + P.w + 8){
+        multiply(2 + Math.floor(Math.random() * 4));
+        stars.splice(s, 1);
+      } else if(st.y > H + 10) stars.splice(s, 1);
+    }
+
+    bricks.forEach(burnStep);
+    for(var d = drops.length - 1; d >= 0; d--){
+      var dr = drops[d]; dr.y += dr.v; dr.ph += 0.15;
+      if(dr.y > P.y - 6 && dr.y < P.y + P.h + 8 && dr.x > P.x - 8 && dr.x < P.x + P.w + 8){
+        coins++; saveGame();
+        fx.push({type:"txt", x:dr.x, y:P.y - 10, t:"+1", life:30});
+        drops.splice(d, 1);
+      } else if(dr.y > H + 10) drops.splice(d, 1);
+    }
+    for(var f = fx.length - 1; f >= 0; f--){
+      var e = fx[f]; e.life--;
+      if(e.type == "boom") e.r += (e.max - e.r) * 0.25; else e.y -= 0.6;
+      if(e.life <= 0) fx.splice(f, 1);
+    }
+
+    if(balls.length == 0){
+      lives--;
+      if(lives <= 0) state = "over"; else serve();
+    }
+    // Level clear: tanang breakable nga block nawala na
+    var left = bricks.filter(function(k){ return !k.steel && k.hp > 0; }).length;
+    if(left == 0 && state == "play"){
+      if(level >= 10){ state = "won"; }
+      else { level++; build(); serve(); msg = "LEVEL " + level; msgT = 90; }
+    }
+  }
+
+  // ===== COIN, BALL ICONS, SHOP =====
+  function drawCoin(cx, cy, r, sq){
+    x.save(); x.translate(cx, cy); x.scale(Math.max(0.15, sq), 1);
+    x.fillStyle = "#ffc107"; x.beginPath(); x.arc(0, 0, r, 0, 7); x.fill();
+    x.strokeStyle = "#b8860b"; x.lineWidth = 1.5; x.stroke();
+    x.beginPath(); x.arc(0, 0, r * 0.55, 0, 7); x.stroke();
+    x.restore(); x.lineWidth = 1;
+  }
+  function drawBallAt(type, bx, by, r){
+    if(type == "basket"){
+      x.fillStyle = "#f57c00"; x.beginPath(); x.arc(bx, by, r, 0, 7); x.fill();
+      x.strokeStyle = "#3e2723"; x.lineWidth = 1;
+      x.beginPath(); x.moveTo(bx - r, by); x.lineTo(bx + r, by); x.moveTo(bx, by - r); x.lineTo(bx, by + r); x.stroke();
+      x.beginPath(); x.arc(bx - r * 1.1, by, r * 0.9, -0.9, 0.9); x.stroke();
+      x.beginPath(); x.arc(bx + r * 1.1, by, r * 0.9, Math.PI - 0.9, Math.PI + 0.9); x.stroke();
+      return;
+    }
+    if(type == "fire"){
+      x.fillStyle = "#ff9800"; x.beginPath(); x.moveTo(bx - r * 0.8, by - r * 0.2);
+      x.quadraticCurveTo(bx, by - r * (2 + Math.random() * 0.6), bx + r * 0.8, by - r * 0.2); x.fill();
+      x.fillStyle = "#ff5722"; x.beginPath(); x.arc(bx, by, r, 0, 7); x.fill();
+      x.fillStyle = "#ffeb3b"; x.beginPath(); x.arc(bx, by, r * 0.5, 0, 7); x.fill();
+      return;
+    }
+    if(type == "cannon"){
+      x.fillStyle = "#37474f"; x.beginPath(); x.arc(bx, by, r, 0, 7); x.fill();
+      x.strokeStyle = "#90a4ae"; x.lineWidth = 1.5; x.stroke(); x.lineWidth = 1;
+      x.fillStyle = "#b0bec5"; x.beginPath(); x.arc(bx - r * 0.35, by - r * 0.35, r * 0.25, 0, 7); x.fill();
+      return;
+    }
+    x.fillStyle = "#fff"; x.beginPath(); x.arc(bx, by, r, 0, 7); x.fill();
+  }
+
+  var SHOP = [
+    {id:"normal", name:"Normal Ball", price:0, desc:"Standard nga bola"},
+    {id:"basket", name:"Basketball", price:10, desc:"2x points kada igo sa block"},
+    {id:"fire", name:"Fireball", price:20, desc:"Mo-anam-anam ug sunog sa blocks"},
+    {id:"cannon", name:"Cannonball", price:30, desc:"Area hit: igo sa duol nga blocks"}
+  ];
+  function cardY(i){ return 88 + i * 78; }
+  function startGame(){ serve(); msg = "LEVEL 1"; msgT = 90; }
+  function shopTap(cx, cy){
+    for(var i = 0; i < SHOP.length; i++){
+      var it = SHOP[i], y = cardY(i);
+      if(cx >= 20 && cx <= 380 && cy >= y && cy <= y + 68){
+        if(owned[it.id]){ sel = it.id; shopMsg = "Gigamit na ang " + it.name; }
+        else if(coins >= it.price){ coins -= it.price; owned[it.id] = true; sel = it.id; shopMsg = "Napalit na ang " + it.name + "!"; }
+        else { shopMsg = "Kulang ang coins (kinahanglan " + it.price + ")"; }
+        shopMsgT = 70; saveGame(); return;
+      }
+    }
+    if(cx >= 100 && cx <= 300 && cy >= 428 && cy <= 476) startGame();
+  }
+  function drawShop(){
+    tick++;
+    x.textAlign = "center"; x.fillStyle = "#ffec27"; x.font = "bold 26px sans-serif";
+    x.fillText("BALL SHOP", W/2, 36);
+    drawCoin(W/2 - 18, 61, 8, 1);
+    x.textAlign = "left"; x.fillStyle = "#fff"; x.font = "bold 16px sans-serif";
+    x.fillText(String(coins), W/2 - 4, 67);
+    for(var i = 0; i < SHOP.length; i++){
+      var it = SHOP[i], y = cardY(i), on = (sel == it.id);
+      x.fillStyle = on ? "rgba(255,236,39,.18)" : "rgba(255,255,255,.08)"; x.fillRect(20, y, 360, 68);
+      x.strokeStyle = on ? "#ffec27" : "rgba(255,255,255,.25)"; x.lineWidth = on ? 2 : 1; x.strokeRect(20, y, 360, 68); x.lineWidth = 1;
+      drawBallAt(it.id, 55, y + 36, 14);
+      x.textAlign = "left"; x.fillStyle = "#fff"; x.font = "bold 15px sans-serif"; x.fillText(it.name, 85, y + 28);
+      x.fillStyle = "#cfd8ff"; x.font = "11px sans-serif"; x.fillText(it.desc, 85, y + 48);
+      x.textAlign = "right"; x.font = "bold 14px sans-serif";
+      if(on){ x.fillStyle = "#4ade80"; x.fillText("GAMIT \u2713", 370, y + 40); }
+      else if(owned[it.id]){ x.fillStyle = "#29adff"; x.fillText("I-GAMIT", 370, y + 40); }
+      else { x.fillStyle = "#ffec27"; x.fillText(String(it.price), 370, y + 40); drawCoin(370 - String(it.price).length * 9 - 14, y + 35, 8, 1); }
+    }
+    x.fillStyle = "#29adff"; x.fillRect(100, 428, 200, 48);
+    x.fillStyle = "#0b1020"; x.textAlign = "center"; x.font = "bold 20px sans-serif"; x.fillText("START \u25B6", W/2, 459);
+    if(shopMsgT > 0){
+      shopMsgT--; x.fillStyle = shopMsg.indexOf("Kulang") == 0 ? "#ff8a80" : "#4ade80"; x.font = "bold 13px sans-serif";
+      x.fillText(shopMsg, W/2, 414);
+    }
+    x.fillStyle = "#9aa4c7"; x.font = "11px sans-serif";
+    x.fillText("Salo-a ang coins nga mahulog gikan sa blocks!", W/2, 494);
+    x.textAlign = "left";
+  }
+
+  // ===== INTRO / TITLE SCREEN =====
+  // Pixel font nga gihimo sa blocks (5x7). Kolor sa matag laray = kolor sa mga block sa game.
+  var FONT = {
+    B:["11110","10001","10001","11110","10001","10001","11110"],
+    L:["10000","10000","10000","10000","10000","10000","11111"],
+    O:["01110","10001","10001","10001","10001","10001","01110"],
+    C:["01110","10001","10000","10000","10000","10001","01110"],
+    K:["10001","10010","10100","11000","10100","10010","10001"],
+    X:["10001","10001","01010","00100","01010","10001","10001"]
+  };
+  var tick = 0, GAME_NAME = "BLOCKX";
+  function drawIntro(){
+    tick++;
+    var i, hues = [0, 45, 90, 135, 180];
+    // LOGO: bricks + bola nga mo-bounce + bar
+    for(i = 0; i < 5; i++){ x.fillStyle = "hsl(" + hues[i] + ",80%,60%)"; x.fillRect(92 + i*44, 30, 40, 16); }
+    for(i = 0; i < 4; i++){ x.fillStyle = "hsl(" + (hues[i] + 22) + ",80%,60%)"; x.fillRect(114 + i*44, 50, 40, 16); }
+    var bx = 200 + Math.sin(tick / 30) * 50, by = 94 - Math.abs(Math.sin(tick / 18)) * 22;
+    x.fillStyle = "#fff"; x.beginPath(); x.arc(bx, by, 6, 0, 7); x.fill();
+    x.fillStyle = "#29adff"; x.fillRect(bx - 35, 102, 70, 10);
+    // TITLE: BLOCKX
+    var cell = 10, x0 = 25, y0 = 130;
+    for(var n = 0; n < GAME_NAME.length; n++){
+      var g = FONT[GAME_NAME.charAt(n)], bob = Math.sin(tick / 15 + n) * 3;
+      if(!g) continue;
+      for(var r = 0; r < 7; r++) for(var q = 0; q < 5; q++){
+        if(g[r].charAt(q) != "1") continue;
+        x.fillStyle = "hsl(" + (r * 45) + ",80%,60%)";
+        x.fillRect(x0 + n*60 + q*cell, y0 + r*cell + bob, cell - 1, cell - 1);
+      }
+    }
+    x.textAlign = "center"; x.fillStyle = "#fff"; x.font = "bold 13px sans-serif";
+    x.fillText("BREAK  \u2022  BOUNCE  \u2022  BOOM", W/2, 240);
+    x.font = "14px sans-serif"; x.fillStyle = "#cfd8ff";
+    x.fillText("10 Levels  \u2022  \u2605 Bonus bola x2 hangtod x5", W/2, 285);
+    x.fillText("Likayi ang bomba ug ang lahi-lahi nga atang", W/2, 310);
+    x.fillText("Mag-ipon ug coins para sa special balls", W/2, 335);
+    x.globalAlpha = 0.5 + 0.5 * Math.sin(tick / 12);
+    x.font = "bold 20px sans-serif"; x.fillStyle = "#ffec27";
+    x.fillText("TAP / CLICK para Start", W/2, 380);
+    x.globalAlpha = 1;
+    x.font = "12px sans-serif"; x.fillStyle = "#9aa4c7";
+    x.fillText("I-drag ang tudlo / mouse para ig-move ang bar", W/2, 440);
+    x.textAlign = "left";
+  }
+
+  function draw(){
+    x.clearRect(0, 0, W, H);
+    if(state == "intro"){ drawIntro(); return; }
+    if(state == "shop"){ drawShop(); return; }
+    bricks.forEach(function(k){
+      if(k.hp <= 0) return;
+      if(k.steel) x.fillStyle = "#8a8f98";
+      else if(k.max == 1) x.fillStyle = "hsl(" + k.hue + ",80%,60%)";
+      else if(k.max == 2) x.fillStyle = k.hp == 2 ? "#4dd0e1" : "#b2ebf2";
+      else x.fillStyle = k.hp == 3 ? "#ff9800" : (k.hp == 2 ? "#ffb74d" : "#ffe0b2");
+      x.fillRect(k.x, k.y, k.w, k.h);
+      if(k.steel){ x.strokeStyle = "#cfd3da"; x.strokeRect(k.x + 2, k.y + 2, k.w - 4, k.h - 4); }
+      if(k.burn > 0){ x.fillStyle = "rgba(255,87,34," + (0.35 + Math.random() * 0.35) + ")"; x.fillRect(k.x, k.y, k.w, k.h); }
+    });
+    obs.forEach(drawObs);
+    x.fillStyle = shrinkT > 0 ? "#ff5252" : "#29adff"; x.fillRect(P.x, P.y, P.w, P.h);
+    balls.forEach(function(b){
+      if(b.type == "fire" && b.trail) b.trail.forEach(function(p, n){
+        x.globalAlpha = 0.07 * (n + 1); x.fillStyle = "#ff7043"; x.beginPath(); x.arc(p.x, p.y, b.r * 0.9, 0, 7); x.fill();
+      });
+      x.globalAlpha = 1;
+      drawBallAt(b.type || "normal", b.x, b.y, b.r);
+    });
+    fx.forEach(function(e){
+      if(e.type == "boom"){
+        x.globalAlpha = Math.max(0, e.life / 18); x.strokeStyle = "#ffab40"; x.lineWidth = 4;
+        x.beginPath(); x.arc(e.x, e.y, e.r, 0, 7); x.stroke(); x.fillStyle = "rgba(255,152,0,.35)"; x.fill();
+        x.globalAlpha = 1; x.lineWidth = 1;
+      } else {
+        x.globalAlpha = Math.max(0, e.life / 30); x.fillStyle = "#ffd54f"; x.font = "bold 14px sans-serif"; x.textAlign = "center";
+        x.fillText(e.t, e.x, e.y); x.globalAlpha = 1;
+      }
+    });
+    x.font = "20px sans-serif"; x.textAlign = "center";
+    stars.forEach(function(st){ x.fillStyle = "#ffec27"; x.fillText("★", st.x, st.y + 7); });
+    drops.forEach(function(d){ drawCoin(d.x, d.y, 8, Math.abs(Math.cos(d.ph))); });
+    x.font = "22px sans-serif";
+    bombs.forEach(function(bo){ x.fillText("💣", bo.x, bo.y + 8); });
+    x.textAlign = "left"; x.font = "14px sans-serif"; x.fillStyle = "#fff";
+    x.fillText("Score: " + score + "  Lives: " + lives + "  Bola: " + balls.length, 10, 22);
+    x.textAlign = "right"; x.fillText("Level " + level, W - 10, 22);
+    x.fillText(String(coins), W - 10, 41); drawCoin(W - 10 - String(coins).length * 8 - 10, 36, 5, 1);
+    x.textAlign = "center";
+    if(state == "ready"){ x.fillText("Tap / Click / Space para launch", W/2, 400); }
+    if(msgT > 0){
+      msgT--; x.font = "30px sans-serif"; x.fillStyle = "#ffec27"; x.fillText(msg, W/2, 380);
+      if(msg.indexOf("LEVEL") == 0){ x.font = "13px sans-serif"; x.fillStyle = "#fff"; x.fillText(OBST[level - 1].tip, W/2, 425); x.fillText("Disenyo: " + NAMES[level - 1], W/2, 445); }
+    }
+    if(state == "over" || state == "won"){
+      x.fillStyle = "rgba(0,0,0,.6)"; x.fillRect(0, 0, W, H);
+      x.fillStyle = "#fff"; x.font = "32px sans-serif";
+      x.fillText(state == "won" ? "YOU WIN! 🏆" : "GAME OVER", W/2, 240);
+      x.font = "14px sans-serif"; x.fillText("Score: " + score + " | Tap para balik sa Shop", W/2, 270);
+    }
+    x.textAlign = "left";
+  }
+
+  // Time-based loop: pareho ang dagan sa game sa 60Hz, 90Hz o 120Hz nga screen (iPhone/Android)
+  var last = 0;
+  function loop(t){
+    var dt = Math.min(50, t - last); last = t;
+    acc += dt / 16.667 * speedMul;
+    while(acc >= 1){ update(); acc -= 1; }
+    draw(); requestAnimationFrame(loop);
+  }
+  restart(); state = "intro"; requestAnimationFrame(function(t){ last = t; loop(t); });
+</script>
+<script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
+</body>
+</html>

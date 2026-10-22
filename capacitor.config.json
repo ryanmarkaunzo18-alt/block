@@ -1,0 +1,8 @@
+{
+  "appId": "com.makmak.blockx",
+  "appName": "BlockX",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
